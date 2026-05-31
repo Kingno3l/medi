@@ -35,6 +35,7 @@ export interface Resource {
   accessible: boolean; // step-free + accessible
   specialties: Specialty[];
   stockNote?: string; // pharmacy-only
+  paymentModel: "nhs" | "private";
 }
 
 export const RADIUS_M = 2500;
@@ -53,6 +54,7 @@ export const MOCK_RESOURCES: Resource[] = [
     callAhead: true,
     accessible: true,
     specialties: ["stroke", "maternity", "general"],
+    paymentModel: "nhs",
   },
   {
     id: "r2",
@@ -67,6 +69,7 @@ export const MOCK_RESOURCES: Resource[] = [
     callAhead: true,
     accessible: true,
     specialties: ["general", "paediatric"],
+    paymentModel: "nhs",
   },
   {
     id: "r3",
@@ -82,6 +85,7 @@ export const MOCK_RESOURCES: Resource[] = [
     accessible: true,
     specialties: ["general"],
     stockNote: "Salbutamol in stock",
+    paymentModel: "nhs",
   },
   {
     id: "r4",
@@ -96,6 +100,7 @@ export const MOCK_RESOURCES: Resource[] = [
     callAhead: true,
     accessible: false,
     specialties: ["mental", "general"],
+    paymentModel: "nhs",
   },
   {
     id: "r5",
@@ -110,6 +115,7 @@ export const MOCK_RESOURCES: Resource[] = [
     callAhead: false,
     accessible: true,
     specialties: ["stroke", "paediatric", "maternity"],
+    paymentModel: "nhs",
   },
   {
     id: "r6",
@@ -125,6 +131,7 @@ export const MOCK_RESOURCES: Resource[] = [
     accessible: true,
     specialties: ["sexual", "general"],
     stockNote: "EllaOne available",
+    paymentModel: "nhs",
   },
   {
     id: "r7",
@@ -139,6 +146,7 @@ export const MOCK_RESOURCES: Resource[] = [
     callAhead: true,
     accessible: true,
     specialties: ["dental", "general"],
+    paymentModel: "nhs",
   },
   {
     id: "r8",
@@ -153,6 +161,22 @@ export const MOCK_RESOURCES: Resource[] = [
     callAhead: false,
     accessible: false,
     specialties: ["general"],
+    paymentModel: "nhs",
+  },
+  {
+    id: "r9",
+    name: "Harley Street Urgent Care (Private)",
+    type: "urgent",
+    x: 82, y: 38, distance: 980,
+    contact: "+44 20 7946 0888",
+    hours: "09:00 – 19:00",
+    address: "102 Harley Street",
+    waitMinutes: 12,
+    verifiedMinutesAgo: 1,
+    callAhead: true,
+    accessible: true,
+    specialties: ["general", "paediatric"],
+    paymentModel: "private",
   },
 ];
 

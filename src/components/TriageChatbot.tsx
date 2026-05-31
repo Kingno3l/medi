@@ -2,12 +2,15 @@ import { useState } from "react";
 import { Bot, User, PhoneCall, Stethoscope, Pill, RotateCcw, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { ResourceType, Specialty } from "@/lib/mock-data";
 
 type ResultType = "emergency" | "urgent" | "pharmacy";
 
 interface Option {
   label: string;
   next: string;
+  filter?: ResourceType | "all";
+  specialty?: Specialty;
 }
 
 interface TriageNode {
@@ -22,19 +25,28 @@ const TRIAGE: Record<string, TriageNode> = {
     id: "start",
     question: "What best describes your situation right now?",
     options: [
-      { label: "Severe chest pain or difficulty breathing", next: "r_emergency" },
+      { label: "Severe chest pain or difficulty breathing", next: "r_stroke_emergency", filter: "hospital", specialty: "stroke" },
+      { label: "Child or baby illness/injury", next: "r_paediatric", filter: "hospital", specialty: "paediatric" },
+      { label: "Pregnancy or maternity emergency", next: "r_maternity", filter: "hospital", specialty: "maternity" },
+      { label: "Toothache or dental emergency", next: "r_dental", filter: "urgent", specialty: "dental" },
+      { label: "Mental health crisis", next: "r_mental", filter: "all", specialty: "mental" },
       { label: "Minor injury or sudden illness", next: "q_injury" },
-      { label: "Medication question or refill", next: "r_pharmacy" },
+      { label: "Medication question or refill", next: "r_pharmacy", filter: "pharmacy", specialty: "general" },
     ],
   },
   q_injury: {
     id: "q_injury",
     question: "Is there heavy bleeding, loss of consciousness, or a head injury?",
     options: [
-      { label: "Yes", next: "r_emergency" },
-      { label: "No", next: "r_urgent" },
+      { label: "Yes", next: "r_emergency", filter: "hospital", specialty: "general" },
+      { label: "No", next: "r_urgent", filter: "urgent", specialty: "general" },
     ],
   },
+  r_stroke_emergency: { id: "r_stroke_emergency", question: "", result: "emergency" },
+  r_paediatric: { id: "r_paediatric", question: "", result: "emergency" },
+  r_maternity: { id: "r_maternity", question: "", result: "emergency" },
+  r_dental: { id: "r_dental", question: "", result: "urgent" },
+  r_mental: { id: "r_mental", question: "", result: "urgent" },
   r_emergency: { id: "r_emergency", question: "", result: "emergency" },
   r_urgent: { id: "r_urgent", question: "", result: "urgent" },
   r_pharmacy: { id: "r_pharmacy", question: "", result: "pharmacy" },
@@ -45,7 +57,12 @@ interface Message {
   text: string;
 }
 
-export function TriageChatbot() {
+interface TriageChatbotProps {
+  onFilterChange?: (filter: ResourceType | "all") => void;
+  onSpecialtyChange?: (specialty: Specialty | null) => void;
+}
+
+export function TriageChatbot({ onFilterChange, onSpecialtyChange }: TriageChatbotProps) {
   const [nodeId, setNodeId] = useState("start");
   const [messages, setMessages] = useState<Message[]>([
     { from: "bot", text: TRIAGE.start.question },
@@ -59,11 +76,21 @@ export function TriageChatbot() {
     if (next.question) newMsgs.push({ from: "bot", text: next.question });
     setMessages(newMsgs);
     setNodeId(opt.next);
+
+    // Apply auto filters
+    if (opt.filter && onFilterChange) {
+      onFilterChange(opt.filter);
+    }
+    if (opt.specialty && onSpecialtyChange) {
+      onSpecialtyChange(opt.specialty === "general" ? null : opt.specialty);
+    }
   };
 
   const reset = () => {
     setNodeId("start");
     setMessages([{ from: "bot", text: TRIAGE.start.question }]);
+    if (onFilterChange) onFilterChange("all");
+    if (onSpecialtyChange) onSpecialtyChange(null);
   };
 
   return (
