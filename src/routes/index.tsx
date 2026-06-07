@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState, useEffect } from "react";
-import { MapPin, PhoneCall, MessageSquare, Hospital, Pill, Stethoscope, LayoutGrid, X, ShieldAlert, ArrowUpDown, Wifi, WifiOff, RefreshCw } from "lucide-react";
+import { MapPin, PhoneCall, MessageSquare, Hospital, Pill, Stethoscope, LayoutGrid, X, ShieldAlert, ArrowUpDown, Wifi, WifiOff, RefreshCw, ServerCrash, Zap, Info } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { MOCK_RESOURCES, SPECIALTIES, type Resource, type ResourceType, type Specialty } from "@/lib/mock-data";
@@ -9,6 +9,7 @@ import { ResourceList } from "@/components/ResourceList";
 import { TriageChatbot } from "@/components/TriageChatbot";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { EmergencyCard } from "@/components/EmergencyCard";
+import { ProjectInfo } from "@/components/ProjectInfo";
 
 export const Route = createFileRoute("/")({
   component: Dashboard,
@@ -39,10 +40,40 @@ function Dashboard() {
   const [selectedId, setSelectedId] = useState<string | null>("r1");
   const [showChat, setShowChat] = useState(false);
   const [showCard, setShowCard] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
   
   // Offline and Low Signal Simulation State
   const [isOffline, setIsOffline] = useState(false);
   const [chatFiltered, setChatFiltered] = useState(false);
+
+  // Server cold-start wake-ping state
+  const [serverStatus, setServerStatus] = useState<"unknown" | "waking" | "online" | "offline">("unknown");
+
+  // Ping the backend health endpoint on mount to wake the Render.com server
+  useEffect(() => {
+    if (isOffline) return;
+    const API_BASE =
+      typeof window !== "undefined" &&
+      (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+        ? "http://localhost:5000"
+        : "https://medi-kamsi.onrender.com";
+
+    setServerStatus("waking");
+    const controller = new AbortController();
+    const wakeTimeout = setTimeout(() => setServerStatus("waking"), 2000);
+
+    fetch(`${API_BASE}/health`, { signal: controller.signal })
+      .then((r) => {
+        clearTimeout(wakeTimeout);
+        setServerStatus(r.ok ? "online" : "offline");
+      })
+      .catch(() => {
+        clearTimeout(wakeTimeout);
+        setServerStatus("offline");
+      });
+
+    return () => { controller.abort(); clearTimeout(wakeTimeout); };
+  }, [isOffline]);
 
   // Sync resources state to localStorage
   useEffect(() => {
@@ -67,16 +98,23 @@ function Dashboard() {
       const json = await response.json();
       if (json.status === "success" && json.data) {
         setResources(json.data);
-        console.log("🔥 Successfully loaded live resources from MediConnect Backend Server!");
+        setLastRefreshed(new Date());
+        setServerStatus("online");
+        console.log("[SUCCESS] Successfully loaded live resources from MediConnect Backend Server!");
       }
     } catch (err) {
-      console.warn("⚠️ API Server offline. Operating in Fail-Safe Local Cache Mode.", err);
+      console.warn("[WARNING] API Server offline. Operating in Fail-Safe Local Cache Mode.", err);
     }
   };
+
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   useEffect(() => {
     if (!isOffline) {
       fetchResourcesFromBackend();
+      // Auto-refresh wait times every 60 seconds
+      const interval = setInterval(fetchResourcesFromBackend, 60_000);
+      return () => clearInterval(interval);
     }
   }, [isOffline]);
 
@@ -112,9 +150,9 @@ function Dashboard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ facility_id: id, wait_minutes: waitMinutes })
       });
-      console.log("🔥 Synchronized crowdsourced wait-time report with central database.");
+      console.log("[SUCCESS] Synchronized crowdsourced wait-time report with central database.");
     } catch (err) {
-      console.warn("⚠️ Central database sync failed. Storing update locally.", err);
+      console.warn("[WARNING] Central database sync failed. Storing update locally.", err);
     }
   };
 
@@ -169,6 +207,20 @@ function Dashboard() {
         </div>
       )}
 
+      {/* Server cold-start warning banner */}
+      {!isOffline && serverStatus === "waking" && (
+        <div className="flex items-center justify-center gap-2 bg-sky-500/10 border-b border-sky-500/20 px-4 py-1 text-xs text-sky-700 dark:text-sky-400">
+          <Zap className="h-3 w-3 animate-pulse" />
+          <span>Waking up the backend server — this may take up to 30 seconds on first load…</span>
+        </div>
+      )}
+      {!isOffline && serverStatus === "offline" && (
+        <div className="flex items-center justify-center gap-2 bg-red-500/10 border-b border-red-500/20 px-4 py-1 text-xs text-red-700 dark:text-red-400">
+          <ServerCrash className="h-3 w-3" />
+          <span>Backend server unreachable. Displaying cached local data.</span>
+        </div>
+      )}
+
       <header className="flex items-center justify-between border-b border-border bg-card px-4 py-3 md:px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -176,9 +228,27 @@ function Dashboard() {
           </div>
           <div>
             <h1 className="text-base font-semibold leading-tight">MediConnect</h1>
-            <p className="flex items-center gap-1 text-xs text-muted-foreground">
+            <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <MapPin className="h-3 w-3" />
-              London, UK · 2.5 km radius
+              Bristol, UK · 2.5 km radius
+              <span
+                title={
+                  serverStatus === "online"
+                    ? "Backend online"
+                    : serverStatus === "waking"
+                    ? "Server waking up…"
+                    : serverStatus === "offline"
+                    ? "Backend offline — using cache"
+                    : ""
+                }
+                className={cn(
+                  "inline-block h-1.5 w-1.5 rounded-full",
+                  serverStatus === "online" && "bg-emerald-500",
+                  serverStatus === "waking" && "bg-amber-400 animate-pulse",
+                  serverStatus === "offline" && "bg-red-500",
+                  serverStatus === "unknown" && "bg-muted-foreground/30",
+                )}
+              />
             </p>
           </div>
         </div>
@@ -200,6 +270,9 @@ function Dashboard() {
           </button>
 
           <ThemeToggle />
+          <Button variant="outline" size="icon" className="h-9 w-9" onClick={() => setShowInfo(true)} title="Project Info">
+            <Info className="h-4 w-4" />
+          </Button>
           <Button variant="outline" size="sm" className="hidden md:inline-flex" onClick={() => setShowCard(true)}>
             <ShieldAlert className="h-4 w-4" /> My card
           </Button>
@@ -236,6 +309,11 @@ function Dashboard() {
               <h2 className="text-sm font-semibold">Nearby facilities</h2>
               <p className="text-xs text-muted-foreground">
                 {filtered.length} found {isOffline ? "in cache" : "within radius"}
+                {lastRefreshed && !isOffline && (
+                  <span className="ml-1 text-muted-foreground/60">
+                    · updated {lastRefreshed.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                  </span>
+                )}
               </p>
             </div>
             <button
@@ -355,13 +433,17 @@ function Dashboard() {
           </div>
         </aside>
 
-        <main className="min-h-[320px] p-3 md:p-4">
+        <main className="relative min-h-[320px] p-3 md:p-4">
           <ResourceMap 
             resources={filtered} 
             selectedId={selectedId} 
             onSelect={setSelectedId} 
             isOffline={isOffline}
           />
+          {/* SVG map disclaimer */}
+          <p className="absolute bottom-5 right-5 text-[10px] text-muted-foreground/50 select-none pointer-events-none">
+            Schematic map · Not real cartography
+          </p>
         </main>
 
         <aside className="hidden flex-col overflow-hidden border-l border-border bg-card lg:flex">
@@ -392,6 +474,7 @@ function Dashboard() {
       )}
 
       <EmergencyCard open={showCard} onClose={() => setShowCard(false)} />
+      <ProjectInfo open={showInfo} onClose={() => setShowInfo(false)} />
 
       <button
         onClick={() => setShowChat(true)}

@@ -40,7 +40,7 @@ app.use((req, res) => {
 
 // Global central error handler middleware
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error("💥 Server Exception:", err);
+  console.error("[ERROR] Server Exception:", err);
   res.status(500).json({
     status: "error",
     message: err.message || "An unexpected central error occurred on the API server"
@@ -48,6 +48,6 @@ app.use((err: any, req: express.Request, res: express.Response, next: express.Ne
 });
 
 app.listen(PORT, () => {
-  console.log(`🚀 MediConnect API Server running on port ${PORT}`);
-  console.log(`📡 Diagnostic Health check: http://localhost:${PORT}/health`);
+  console.log(`[INFO] MediConnect API Server running on port ${PORT}`);
+  console.log(`[INFO] Diagnostic Health check: http://localhost:${PORT}/health`);
 });

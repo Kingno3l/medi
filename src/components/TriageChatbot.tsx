@@ -1,61 +1,55 @@
-import { useState } from "react";
-import { Bot, User, PhoneCall, Stethoscope, Pill, RotateCcw, AlertTriangle } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { Bot, User, PhoneCall, Stethoscope, Pill, RotateCcw, AlertTriangle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ResourceType, Specialty } from "@/lib/mock-data";
 
 type ResultType = "emergency" | "urgent" | "pharmacy";
 
-interface Option {
-  label: string;
-  next: string;
-  filter?: ResourceType | "all";
-  specialty?: Specialty;
-}
-
-interface TriageNode {
-  id: string;
-  question: string;
-  options?: Option[];
-  result?: ResultType;
-}
-
-const TRIAGE: Record<string, TriageNode> = {
-  start: {
-    id: "start",
-    question: "What best describes your situation right now?",
-    options: [
-      { label: "Severe chest pain or difficulty breathing", next: "r_stroke_emergency", filter: "hospital", specialty: "stroke" },
-      { label: "Child or baby illness/injury", next: "r_paediatric", filter: "hospital", specialty: "paediatric" },
-      { label: "Pregnancy or maternity emergency", next: "r_maternity", filter: "hospital", specialty: "maternity" },
-      { label: "Toothache or dental emergency", next: "r_dental", filter: "urgent", specialty: "dental" },
-      { label: "Mental health crisis", next: "r_mental", filter: "all", specialty: "mental" },
-      { label: "Minor injury or sudden illness", next: "q_injury" },
-      { label: "Medication question or refill", next: "r_pharmacy", filter: "pharmacy", specialty: "general" },
-    ],
-  },
-  q_injury: {
-    id: "q_injury",
-    question: "Is there heavy bleeding, loss of consciousness, or a head injury?",
-    options: [
-      { label: "Yes", next: "r_emergency", filter: "hospital", specialty: "general" },
-      { label: "No", next: "r_urgent", filter: "urgent", specialty: "general" },
-    ],
-  },
-  r_stroke_emergency: { id: "r_stroke_emergency", question: "", result: "emergency" },
-  r_paediatric: { id: "r_paediatric", question: "", result: "emergency" },
-  r_maternity: { id: "r_maternity", question: "", result: "emergency" },
-  r_dental: { id: "r_dental", question: "", result: "urgent" },
-  r_mental: { id: "r_mental", question: "", result: "urgent" },
-  r_emergency: { id: "r_emergency", question: "", result: "emergency" },
-  r_urgent: { id: "r_urgent", question: "", result: "urgent" },
-  r_pharmacy: { id: "r_pharmacy", question: "", result: "pharmacy" },
-};
-
 interface Message {
   from: "bot" | "user";
   text: string;
 }
+
+interface TriageOption {
+  key: string;
+  label: string;
+}
+
+interface TriageState {
+  node_id: string;
+  question_text: string | null;
+  action_type: "EMERGENCY_BANNER" | "REDIRECT_NODE" | "RECOMMENDATION";
+  options: TriageOption[] | null;
+  auto_filter_directives?: {
+    type?: ResourceType | "all";
+    specialty?: string;
+  } | null;
+  payload?: {
+    message: string;
+    trigger_call?: boolean;
+    recommended_type?: ResourceType;
+    recommended_specialty?: string;
+  } | null;
+}
+
+// Resolve action type to a result type for the UI
+function actionToResult(actionType: string): ResultType | null {
+  if (actionType === "EMERGENCY_BANNER") return "emergency";
+  if (actionType === "RECOMMENDATION") return "urgent"; // overridden by payload
+  return null;
+}
+
+function getResultFromPayload(payload: TriageState["payload"]): ResultType {
+  if (!payload) return "urgent";
+  return payload.recommended_type === "pharmacy" ? "pharmacy" : "urgent";
+}
+
+const API_BASE =
+  typeof window !== "undefined" &&
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+    ? "http://localhost:5000"
+    : "https://medi-kamsi.onrender.com";
 
 interface TriageChatbotProps {
   onFilterChange?: (filter: ResourceType | "all") => void;
@@ -63,38 +57,118 @@ interface TriageChatbotProps {
 }
 
 export function TriageChatbot({ onFilterChange, onSpecialtyChange }: TriageChatbotProps) {
-  const [nodeId, setNodeId] = useState("start");
-  const [messages, setMessages] = useState<Message[]>([
-    { from: "bot", text: TRIAGE.start.question },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [currentState, setCurrentState] = useState<TriageState | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [stepLoading, setStepLoading] = useState(false);
+  const [apiError, setApiError] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
-  const node = TRIAGE[nodeId];
+  // Auto-scroll on new messages
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages, currentState]);
 
-  const choose = (opt: Option) => {
-    const next = TRIAGE[opt.next];
-    const newMsgs: Message[] = [...messages, { from: "user", text: opt.label }];
-    if (next.question) newMsgs.push({ from: "bot", text: next.question });
-    setMessages(newMsgs);
-    setNodeId(opt.next);
-
-    // Apply auto filters
-    if (opt.filter && onFilterChange) {
-      onFilterChange(opt.filter);
-    }
-    if (opt.specialty && onSpecialtyChange) {
-      onSpecialtyChange(opt.specialty === "general" ? null : opt.specialty);
+  // Fetch the start node from backend on mount
+  const initTriage = async () => {
+    setLoading(true);
+    setApiError(false);
+    setMessages([]);
+    setCurrentState(null);
+    try {
+      const res = await fetch(`${API_BASE}/api/v2/triage/start`);
+      if (!res.ok) throw new Error("Start node fetch failed");
+      const data = await res.json();
+      const startState: TriageState = {
+        node_id: data.node_id,
+        question_text: data.question_text,
+        action_type: "REDIRECT_NODE",
+        options: data.options,
+        auto_filter_directives: null,
+        payload: null,
+      };
+      setCurrentState(startState);
+      setMessages([{ from: "bot", text: data.question_text }]);
+    } catch {
+      setApiError(true);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const reset = () => {
-    setNodeId("start");
-    setMessages([{ from: "bot", text: TRIAGE.start.question }]);
+  useEffect(() => {
+    initTriage();
+  }, []);
+
+  const handleChoose = async (option: TriageOption) => {
+    if (!currentState || stepLoading) return;
+
+    // Optimistically append user message
+    setMessages((prev) => [...prev, { from: "user", text: option.label }]);
+    setStepLoading(true);
+
+    try {
+      const res = await fetch(`${API_BASE}/api/v2/triage/step`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          current_node_id: currentState.node_id,
+          user_selection: option.key,
+        }),
+      });
+      if (!res.ok) throw new Error("Step failed");
+      const data = await res.json();
+
+      const nextState: TriageState = {
+        node_id: data.next_node_id,
+        question_text: data.question_text,
+        action_type: data.action_type,
+        options: data.options,
+        auto_filter_directives: data.auto_filter_directives,
+        payload: data.payload,
+      };
+
+      // Apply auto-filter directives to the map sidebar
+      if (data.auto_filter_directives) {
+        const d = data.auto_filter_directives;
+        if (d.type && onFilterChange) onFilterChange(d.type as ResourceType | "all");
+        if (d.specialty && onSpecialtyChange)
+          onSpecialtyChange(d.specialty === "general" ? null : (d.specialty as Specialty));
+      }
+
+      // Append the bot's follow-up question if any
+      if (data.question_text) {
+        setMessages((prev) => [...prev, { from: "bot", text: data.question_text }]);
+      }
+
+      setCurrentState(nextState);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        { from: "bot", text: "Sorry, I couldn't connect to the triage engine. Please try again." },
+      ]);
+    } finally {
+      setStepLoading(false);
+    }
+  };
+
+  const handleReset = () => {
     if (onFilterChange) onFilterChange("all");
     if (onSpecialtyChange) onSpecialtyChange(null);
+    initTriage();
   };
+
+  // Determine result type for terminal nodes
+  const result: ResultType | null =
+    currentState && currentState.action_type !== "REDIRECT_NODE"
+      ? currentState.action_type === "EMERGENCY_BANNER"
+        ? "emergency"
+        : getResultFromPayload(currentState.payload)
+      : null;
 
   return (
     <div className="flex h-full flex-col">
+      {/* Header */}
       <div className="flex items-center justify-between border-b border-border px-4 py-3">
         <div className="flex items-center gap-2">
           <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
@@ -105,12 +179,38 @@ export function TriageChatbot({ onFilterChange, onSpecialtyChange }: TriageChatb
             <p className="text-xs text-muted-foreground">Signposting only — not a diagnosis</p>
           </div>
         </div>
-        <Button size="sm" variant="ghost" onClick={reset} className="h-8 gap-1 text-xs">
+        <Button size="sm" variant="ghost" onClick={handleReset} className="h-8 gap-1 text-xs">
           <RotateCcw className="h-3 w-3" /> Restart
         </Button>
       </div>
 
-      <div className="flex-1 space-y-3 overflow-y-auto p-4">
+      {/* Messages */}
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-4">
+        {/* Loading skeleton */}
+        {loading && (
+          <div className="flex gap-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Bot className="h-3.5 w-3.5" />
+            </div>
+            <div className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Connecting to triage engine…
+            </div>
+          </div>
+        )}
+
+        {/* API error fallback */}
+        {apiError && !loading && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            <p className="font-semibold mb-1">Triage engine offline</p>
+            <p className="text-xs text-foreground">The triage server is unavailable. Please call 999 for emergencies or NHS 111 for urgent advice.</p>
+            <Button className="mt-2 w-full" size="sm" variant="destructive" onClick={initTriage}>
+              <RotateCcw className="h-3.5 w-3.5" /> Retry connection
+            </Button>
+          </div>
+        )}
+
+        {/* Conversation messages */}
         {messages.map((m, i) => (
           <div key={i} className={cn("flex gap-2", m.from === "user" && "flex-row-reverse")}>
             <div
@@ -124,9 +224,7 @@ export function TriageChatbot({ onFilterChange, onSpecialtyChange }: TriageChatb
             <div
               className={cn(
                 "max-w-[80%] rounded-lg px-3 py-2 text-sm",
-                m.from === "bot"
-                  ? "bg-muted text-foreground"
-                  : "bg-primary text-primary-foreground",
+                m.from === "bot" ? "bg-muted text-foreground" : "bg-primary text-primary-foreground",
               )}
             >
               {m.text}
@@ -134,15 +232,30 @@ export function TriageChatbot({ onFilterChange, onSpecialtyChange }: TriageChatb
           </div>
         ))}
 
-        {node.result && <TriageResult result={node.result} />}
+        {/* Step loading indicator */}
+        {stepLoading && (
+          <div className="flex gap-2">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+              <Bot className="h-3.5 w-3.5" />
+            </div>
+            <div className="flex items-center gap-1.5 rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              <span>Analysing…</span>
+            </div>
+          </div>
+        )}
+
+        {/* Terminal result card */}
+        {result && currentState?.payload && <TriageResult result={result} message={currentState.payload.message} />}
       </div>
 
-      {node.options && (
+      {/* Options panel */}
+      {!loading && !apiError && currentState?.options && currentState.options.length > 0 && !stepLoading && (
         <div className="space-y-2 border-t border-border p-3">
-          {node.options.map((opt) => (
+          {currentState.options.map((opt) => (
             <button
-              key={opt.label}
-              onClick={() => choose(opt)}
+              key={opt.key}
+              onClick={() => handleChoose(opt)}
               className="w-full rounded-md border border-border bg-card px-3 py-2 text-left text-sm text-foreground transition-colors hover:border-primary/40 hover:bg-muted"
             >
               {opt.label}
@@ -154,7 +267,7 @@ export function TriageChatbot({ onFilterChange, onSpecialtyChange }: TriageChatb
   );
 }
 
-function TriageResult({ result }: { result: ResultType }) {
+function TriageResult({ result, message }: { result: ResultType; message: string }) {
   if (result === "emergency") {
     return (
       <div className="rounded-md border border-destructive/30 bg-destructive/5 p-3">
@@ -162,9 +275,7 @@ function TriageResult({ result }: { result: ResultType }) {
           <AlertTriangle className="h-4 w-4" />
           <p className="text-sm font-semibold">Call emergency services</p>
         </div>
-        <p className="mt-1.5 text-sm text-foreground">
-          Your symptoms may indicate a medical emergency. Call 999 or 112 immediately.
-        </p>
+        <p className="mt-1.5 text-sm text-foreground">{message}</p>
         <Button className="mt-3 w-full" variant="destructive">
           <PhoneCall className="h-4 w-4" /> Call 999
         </Button>
@@ -173,26 +284,22 @@ function TriageResult({ result }: { result: ResultType }) {
   }
   if (result === "urgent") {
     return (
-      <div className="rounded-md border border-urgent/30 bg-urgent/5 p-3">
-        <div className="flex items-center gap-2 text-urgent">
+      <div className="rounded-md border border-amber-500/30 bg-amber-500/5 p-3">
+        <div className="flex items-center gap-2 text-amber-700 dark:text-amber-400">
           <Stethoscope className="h-4 w-4" />
           <p className="text-sm font-semibold">Visit urgent care</p>
         </div>
-        <p className="mt-1.5 text-sm text-foreground">
-          Head to your nearest urgent care centre or GP. See the side panel for options.
-        </p>
+        <p className="mt-1.5 text-sm text-foreground">{message}</p>
       </div>
     );
   }
   return (
-    <div className="rounded-md border border-pharmacy/30 bg-pharmacy/5 p-3">
-      <div className="flex items-center gap-2 text-pharmacy">
+    <div className="rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3">
+      <div className="flex items-center gap-2 text-emerald-700 dark:text-emerald-400">
         <Pill className="h-4 w-4" />
         <p className="text-sm font-semibold">Visit a pharmacy</p>
       </div>
-      <p className="mt-1.5 text-sm text-foreground">
-        A pharmacist can help. The nearest 24-hour pharmacy is shown on the map.
-      </p>
+      <p className="mt-1.5 text-sm text-foreground">{message}</p>
     </div>
   );
 }

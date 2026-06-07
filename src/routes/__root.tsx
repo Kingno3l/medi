@@ -36,12 +36,17 @@ export const Route = createRootRoute({
       { property: "og:description", content: "Find nearby hospitals, urgent care, and 24h pharmacies within 2.5 km." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@MediConnect" },
     ],
     links: [
       {
         rel: "stylesheet",
         href: appCss,
+      },
+      {
+        rel: "icon",
+        type: "image/svg+xml",
+        href: "data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%23dc2626'/><text x='50' y='72' font-size='60' text-anchor='middle' fill='white'>✚</text></svg>",
       },
     ],
   }),

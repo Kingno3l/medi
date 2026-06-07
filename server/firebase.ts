@@ -16,14 +16,14 @@ try {
       databaseURL
     });
     db = admin.firestore();
-    console.log("🔥 Firebase Firestore connected successfully!");
+    console.log("[INFO] Firebase Firestore connected successfully!");
   } else {
     throw new Error("No service account path specified. Falling back to local state database.");
   }
 } catch (error: any) {
   isFallback = true;
-  console.warn("⚠️ Firebase connection omitted:", error.message);
-  console.log("📦 Initializing in-memory fail-safe local state engine...");
+  console.warn("[WARNING] Firebase connection omitted:", error.message);
+  console.log("[INFO] Initializing in-memory fail-safe local state engine...");
 }
 
 // Memory database instance
